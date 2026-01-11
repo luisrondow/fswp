@@ -9,6 +9,8 @@ trash = "4.0"
 ratatui = "0.28"
 crossterm = "0.28"
 syntect = "5"
+ratatui-image = "1"
+image = "0.25"
 
 [dev-dependencies]
 tempfile = "3"
