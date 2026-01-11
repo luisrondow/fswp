@@ -1,4 +1,5 @@
 mod domain;
+mod preview;
 mod tui;
 
 use crossterm::{

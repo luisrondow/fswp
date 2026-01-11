@@ -2,11 +2,12 @@
 #![allow(dead_code)]
 
 use crate::domain::AppState;
+use crate::preview;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
+    style::{Color, Style},
+    text::Line,
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
@@ -99,28 +100,29 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
 /// Renders the main content area
 fn render_content(frame: &mut Frame, area: Rect, state: &AppState) {
     let content = if let Some(file) = state.current_file() {
-        let info = vec![
-            Line::from(vec![
-                Span::styled("Path: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(file.path.display().to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled("Size: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!("{} bytes", file.size)),
-            ]),
-            Line::from(vec![
-                Span::styled("Type: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!("{:?}", file.file_type)),
-            ]),
-            Line::from(vec![
-                Span::styled("Modified: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(file.modified_date.to_string()),
-            ]),
-        ];
+        // Generate file preview
+        let preview_lines = match preview::generate_preview(file) {
+            Ok(lines) => lines,
+            Err(e) => vec![
+                format!("Error generating preview: {}", e),
+                String::new(),
+                format!("File: {}", file.name),
+                format!("Path: {}", file.path.display()),
+                format!("Size: {} bytes", file.size),
+                format!("Type: {:?}", file.file_type),
+            ],
+        };
 
-        Paragraph::new(info)
-            .block(Block::default().borders(Borders::ALL).title("File Info"))
-            .wrap(Wrap { trim: true })
+        // Convert strings to Lines
+        let lines: Vec<Line> = preview_lines.into_iter().map(Line::from).collect();
+
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!("Preview: {}", file.name)),
+            )
+            .wrap(Wrap { trim: false })
     } else {
         Paragraph::new("No files to display")
             .block(Block::default().borders(Borders::ALL).title("Content"))
