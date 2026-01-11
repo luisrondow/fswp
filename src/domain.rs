@@ -98,6 +98,45 @@ pub struct AppState {
 /// - Sorts results by modification date in ascending order
 /// - Handles permission errors gracefully by skipping inaccessible files
 pub fn discover_files(dir_path: &Path) -> io::Result<Vec<FileEntry>> {
+    discover_files_with_options(dir_path, &DiscoveryOptions::default())
+}
+
+/// Options for file discovery
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryOptions {
+    /// File type filters (None = all types)
+    pub file_types: Option<Vec<FileType>>,
+    /// Show hidden files
+    pub show_hidden: bool,
+    /// Minimum file size in bytes
+    pub min_size: Option<u64>,
+    /// Maximum file size in bytes
+    pub max_size: Option<u64>,
+    /// Sort order
+    pub sort_by: SortBy,
+    /// Reverse sort order
+    pub reverse: bool,
+}
+
+/// Sort order for files
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SortBy {
+    /// Sort by modification date
+    #[default]
+    Date,
+    /// Sort by file name
+    Name,
+    /// Sort by file size
+    Size,
+    /// Sort by file type
+    Type,
+}
+
+/// Discovers files with custom options
+pub fn discover_files_with_options(
+    dir_path: &Path,
+    options: &DiscoveryOptions,
+) -> io::Result<Vec<FileEntry>> {
     let mut files = Vec::new();
 
     // Read directory entries
@@ -107,25 +146,26 @@ pub fn discover_files(dir_path: &Path) -> io::Result<Vec<FileEntry>> {
         // Skip entries that cannot be read (permission errors, etc.)
         let entry = match entry_result {
             Ok(e) => e,
-            Err(_) => continue, // Gracefully skip inaccessible entries
+            Err(_) => continue,
         };
 
         let path = entry.path();
 
-        // Get file name and skip hidden files (starting with '.')
+        // Get file name
         let file_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(name) => name,
             None => continue,
         };
 
-        if file_name.starts_with('.') {
+        // Skip hidden files unless show_hidden is true
+        if !options.show_hidden && file_name.starts_with('.') {
             continue;
         }
 
         // Skip directories
         let metadata = match fs::metadata(&path) {
             Ok(m) => m,
-            Err(_) => continue, // Gracefully skip if metadata cannot be read
+            Err(_) => continue,
         };
 
         if metadata.is_dir() {
@@ -133,14 +173,55 @@ pub fn discover_files(dir_path: &Path) -> io::Result<Vec<FileEntry>> {
         }
 
         // Create FileEntry from path
-        match FileEntry::from_path(&path) {
-            Ok(file_entry) => files.push(file_entry),
-            Err(_) => continue, // Gracefully skip if FileEntry cannot be created
+        let file_entry = match FileEntry::from_path(&path) {
+            Ok(fe) => fe,
+            Err(_) => continue,
+        };
+
+        // Filter by file type
+        if let Some(ref type_filters) = options.file_types {
+            if !type_filters.contains(&file_entry.file_type) {
+                continue;
+            }
         }
+
+        // Filter by min size
+        if let Some(min_size) = options.min_size {
+            if file_entry.size < min_size {
+                continue;
+            }
+        }
+
+        // Filter by max size
+        if let Some(max_size) = options.max_size {
+            if file_entry.size > max_size {
+                continue;
+            }
+        }
+
+        files.push(file_entry);
     }
 
-    // Sort by modification date (oldest first)
-    files.sort_by(|a, b| a.modified_date.cmp(&b.modified_date));
+    // Sort based on options
+    match options.sort_by {
+        SortBy::Date => files.sort_by(|a, b| a.modified_date.cmp(&b.modified_date)),
+        SortBy::Name => files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        SortBy::Size => files.sort_by(|a, b| a.size.cmp(&b.size)),
+        SortBy::Type => files.sort_by(|a, b| {
+            let type_order = |t: &FileType| match t {
+                FileType::Text => 0,
+                FileType::Image => 1,
+                FileType::Pdf => 2,
+                FileType::Binary => 3,
+            };
+            type_order(&a.file_type).cmp(&type_order(&b.file_type))
+        }),
+    }
+
+    // Reverse if requested
+    if options.reverse {
+        files.reverse();
+    }
 
     Ok(files)
 }
@@ -159,6 +240,8 @@ pub struct DecisionEngine {
     pub files: Vec<FileEntry>,
     pub decisions: Vec<(usize, Decision)>,
     staging_dir: PathBuf,
+    /// Dry run mode - don't actually move files
+    dry_run: bool,
 }
 
 impl DecisionEngine {
@@ -179,13 +262,24 @@ impl DecisionEngine {
             files,
             decisions: Vec::new(),
             staging_dir,
+            dry_run: false,
         }
+    }
+
+    /// Sets dry run mode
+    pub fn set_dry_run(&mut self, dry_run: bool) {
+        self.dry_run = dry_run;
+    }
+
+    /// Returns whether dry run mode is enabled
+    pub fn is_dry_run(&self) -> bool {
+        self.dry_run
     }
 
     /// Records a decision for the file at the given index
     ///
     /// For Keep decisions, the file is left untouched.
-    /// For Trash decisions, the file is moved to a staging directory.
+    /// For Trash decisions, the file is moved to a staging directory (unless dry-run).
     pub fn record_decision(&mut self, index: usize, decision: Decision) -> io::Result<()> {
         if index >= self.files.len() {
             return Err(io::Error::new(
@@ -204,6 +298,12 @@ impl DecisionEngine {
                 Ok(())
             }
             Decision::Trash => {
+                // In dry-run mode, just record the decision without moving files
+                if self.dry_run {
+                    self.decisions.push((index, decision));
+                    return Ok(());
+                }
+
                 // Move file to staging directory
                 if !original_path.exists() {
                     return Err(io::Error::new(
@@ -231,6 +331,11 @@ impl DecisionEngine {
             .decisions
             .pop()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No decisions to undo"))?;
+
+        // In dry-run mode, just remove from decisions (no file operations)
+        if self.dry_run {
+            return Ok(());
+        }
 
         match decision {
             Decision::Keep => {
@@ -671,6 +776,135 @@ mod tests {
             assert_eq!(files.len(), 1);
             assert_eq!(files[0].name, "file.txt");
         }
+
+        #[test]
+        fn test_discover_with_file_type_filter() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            fs::write(dir_path.join("code.rs"), b"fn main() {}").unwrap();
+            fs::write(dir_path.join("image.png"), b"PNG").unwrap();
+            fs::write(dir_path.join("notes.txt"), b"notes").unwrap();
+
+            let options = DiscoveryOptions {
+                file_types: Some(vec![FileType::Text]),
+                ..Default::default()
+            };
+
+            let files = discover_files_with_options(dir_path, &options).unwrap();
+
+            assert_eq!(files.len(), 2);
+            let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
+            assert!(names.contains(&"code.rs"));
+            assert!(names.contains(&"notes.txt"));
+            assert!(!names.contains(&"image.png"));
+        }
+
+        #[test]
+        fn test_discover_with_size_filter() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            fs::write(dir_path.join("small.txt"), b"hi").unwrap();
+            fs::write(dir_path.join("medium.txt"), b"hello world!").unwrap();
+            fs::write(dir_path.join("large.txt"), vec![b'x'; 1000]).unwrap();
+
+            let options = DiscoveryOptions {
+                min_size: Some(10),
+                max_size: Some(100),
+                ..Default::default()
+            };
+
+            let files = discover_files_with_options(dir_path, &options).unwrap();
+
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].name, "medium.txt");
+        }
+
+        #[test]
+        fn test_discover_with_show_hidden() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            fs::write(dir_path.join("visible.txt"), b"visible").unwrap();
+            fs::write(dir_path.join(".hidden"), b"hidden").unwrap();
+
+            let options = DiscoveryOptions {
+                show_hidden: true,
+                ..Default::default()
+            };
+
+            let files = discover_files_with_options(dir_path, &options).unwrap();
+
+            assert_eq!(files.len(), 2);
+            let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
+            assert!(names.contains(&"visible.txt"));
+            assert!(names.contains(&".hidden"));
+        }
+
+        #[test]
+        fn test_discover_sort_by_name() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            fs::write(dir_path.join("charlie.txt"), b"c").unwrap();
+            fs::write(dir_path.join("alpha.txt"), b"a").unwrap();
+            fs::write(dir_path.join("bravo.txt"), b"b").unwrap();
+
+            let options = DiscoveryOptions {
+                sort_by: SortBy::Name,
+                ..Default::default()
+            };
+
+            let files = discover_files_with_options(dir_path, &options).unwrap();
+
+            assert_eq!(files[0].name, "alpha.txt");
+            assert_eq!(files[1].name, "bravo.txt");
+            assert_eq!(files[2].name, "charlie.txt");
+        }
+
+        #[test]
+        fn test_discover_sort_by_size() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            fs::write(dir_path.join("large.txt"), vec![b'x'; 100]).unwrap();
+            fs::write(dir_path.join("small.txt"), b"s").unwrap();
+            fs::write(dir_path.join("medium.txt"), vec![b'x'; 50]).unwrap();
+
+            let options = DiscoveryOptions {
+                sort_by: SortBy::Size,
+                ..Default::default()
+            };
+
+            let files = discover_files_with_options(dir_path, &options).unwrap();
+
+            assert_eq!(files[0].name, "small.txt");
+            assert_eq!(files[1].name, "medium.txt");
+            assert_eq!(files[2].name, "large.txt");
+        }
+
+        #[test]
+        fn test_discover_reverse_sort() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            fs::write(dir_path.join("alpha.txt"), b"a").unwrap();
+            fs::write(dir_path.join("bravo.txt"), b"b").unwrap();
+            fs::write(dir_path.join("charlie.txt"), b"c").unwrap();
+
+            let options = DiscoveryOptions {
+                sort_by: SortBy::Name,
+                reverse: true,
+                ..Default::default()
+            };
+
+            let files = discover_files_with_options(dir_path, &options).unwrap();
+
+            assert_eq!(files[0].name, "charlie.txt");
+            assert_eq!(files[1].name, "bravo.txt");
+            assert_eq!(files[2].name, "alpha.txt");
+        }
     }
 
     mod decision_engine_tests {
@@ -902,6 +1136,56 @@ mod tests {
             assert_eq!(stats.total_files, 4);
             assert_eq!(stats.kept, 2);
             assert_eq!(stats.trashed, 2);
+        }
+
+        #[test]
+        fn test_decision_engine_dry_run_trash() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test.txt");
+            fs::write(&file_path, b"content").unwrap();
+
+            let entry = create_test_entry_with_path(file_path.clone());
+            let mut engine = DecisionEngine::new(vec![entry]);
+            engine.set_dry_run(true);
+
+            // In dry-run mode, trash should NOT move the file
+            let result = engine.record_decision(0, Decision::Trash);
+            assert!(result.is_ok());
+            assert_eq!(engine.decisions.len(), 1);
+
+            // File should still exist (not moved)
+            assert!(file_path.exists());
+        }
+
+        #[test]
+        fn test_decision_engine_dry_run_undo() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("test.txt");
+            fs::write(&file_path, b"content").unwrap();
+
+            let entry = create_test_entry_with_path(file_path.clone());
+            let mut engine = DecisionEngine::new(vec![entry]);
+            engine.set_dry_run(true);
+
+            engine.record_decision(0, Decision::Trash).unwrap();
+            assert_eq!(engine.decisions.len(), 1);
+
+            let result = engine.undo();
+            assert!(result.is_ok());
+            assert_eq!(engine.decisions.len(), 0);
+
+            // File should still exist
+            assert!(file_path.exists());
+        }
+
+        #[test]
+        fn test_decision_engine_is_dry_run() {
+            let engine = DecisionEngine::new(vec![]);
+            assert!(!engine.is_dry_run());
+
+            let mut engine2 = DecisionEngine::new(vec![]);
+            engine2.set_dry_run(true);
+            assert!(engine2.is_dry_run());
         }
     }
 }

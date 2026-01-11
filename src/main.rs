@@ -1,39 +1,87 @@
 mod async_preview;
+mod cli;
 mod domain;
 mod preview;
 mod tui;
 
 use async_preview::SyncPreviewManager;
+use cli::{AppConfig, Args, SortOrder};
 use crossterm::{
     event::{self, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use domain::{discover_files, AppState, Decision, DecisionEngine};
+use domain::{
+    discover_files_with_options, AppState, Decision, DecisionEngine, DiscoveryOptions, SortBy,
+};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{io, path::Path, time::Duration};
+use std::{io, time::Duration};
 use tui::{
     handle_key_event, render_help_overlay, render_summary, render_with_preview, KeyAction,
     ViewState,
 };
 
 fn main() -> io::Result<()> {
-    println!("File Tinder - Terminal File Declutterer");
-    Ok(())
+    // Parse command line arguments
+    let args = Args::parse_args();
+
+    // Validate arguments
+    if let Err(e) = args.validate() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+
+    // Convert to config
+    let config: AppConfig = args.into();
+
+    // Run the app
+    run_app_with_config(&config)
 }
 
-/// Runs the TUI application
-pub fn run_app(directory: &Path) -> io::Result<()> {
-    // Discover files
-    let files = discover_files(directory)?;
+/// Runs the TUI application with configuration
+pub fn run_app_with_config(config: &AppConfig) -> io::Result<()> {
+    // Convert config to discovery options
+    let discovery_options = DiscoveryOptions {
+        file_types: config.file_type_filters.clone(),
+        show_hidden: config.show_hidden,
+        min_size: config.min_size,
+        max_size: config.max_size,
+        sort_by: match config.sort_by {
+            SortOrder::Date => SortBy::Date,
+            SortOrder::Name => SortBy::Name,
+            SortOrder::Size => SortBy::Size,
+            SortOrder::Type => SortBy::Type,
+        },
+        reverse: config.reverse,
+    };
+
+    // Discover files with options
+    let files = discover_files_with_options(&config.directory, &discovery_options)?;
+
     if files.is_empty() {
-        println!("No files found in directory");
+        println!(
+            "No files found in directory: {}",
+            config.directory.display()
+        );
+        if config.file_type_filters.is_some() {
+            println!("(File type filters are active - try without filters)");
+        }
         return Ok(());
+    }
+
+    // Print dry-run notice
+    if config.dry_run {
+        println!("🔍 DRY RUN MODE - No files will be moved to trash");
+        println!("   Found {} files to review", files.len());
+        println!("   Press Enter to continue...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
     }
 
     // Initialize state
     let mut app_state = AppState::new(files.clone());
     let mut decision_engine = DecisionEngine::new(files);
+    decision_engine.set_dry_run(config.dry_run);
     let mut preview_manager = SyncPreviewManager::new();
 
     // Setup terminal
@@ -55,6 +103,14 @@ pub fn run_app(directory: &Path) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+
+    // Print summary after exit
+    if config.dry_run {
+        let stats = decision_engine.get_statistics();
+        println!("\n🔍 DRY RUN COMPLETE");
+        println!("   Would have kept: {} files", stats.kept);
+        println!("   Would have trashed: {} files", stats.trashed);
+    }
 
     result
 }
