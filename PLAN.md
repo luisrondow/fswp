@@ -255,6 +255,7 @@ tempfile = "3"
 2. Write failing tests first (Red)
 3. Implement minimum code to pass tests (Green)
 4. Refactor while keeping tests green (Refactor)
-5. Push to remote: `gh pr create` or `git push -u origin feature/XX-name`
-6. Wait for user confirmation
-7. Merge to main and continue to next phase
+5. Push to remote: `git push -u origin feature/XX-name`
+6. Create the PR: `gh pr create --title "xxxx" --body "xxxxx"`
+7. Wait for user confirmation
+8. Merge to main and continue to next phase
