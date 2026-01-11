@@ -1,8 +1,9 @@
-// Preview module for generating file previews with syntax highlighting and images
+// Preview module for generating file previews with syntax highlighting, images, and PDFs
 #![allow(dead_code)]
 
 use crate::domain::FileEntry;
 use image::{DynamicImage, GenericImageView};
+use pdfium_render::prelude::*;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -164,6 +165,97 @@ pub fn generate_image_preview(file_entry: &FileEntry) -> io::Result<Vec<String>>
     Ok(preview)
 }
 
+/// Checks if Pdfium library is available by attempting to initialize it
+pub fn is_pdfium_available() -> bool {
+    std::panic::catch_unwind(Pdfium::default).is_ok()
+}
+
+/// Loads a PDF and renders the first page to an image
+pub fn render_pdf_first_page(path: &Path) -> io::Result<DynamicImage> {
+    // Initialize Pdfium library - this will panic if the library isn't available
+    let pdfium = std::panic::catch_unwind(Pdfium::default).map_err(|_| {
+        io::Error::other("Pdfium library not available. Install libpdfium to enable PDF previews.")
+    })?;
+
+    // Load the PDF document
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|e| io::Error::other(format!("PDF loading error: {}", e)))?;
+
+    // Get the first page
+    let page = document
+        .pages()
+        .get(0)
+        .map_err(|e| io::Error::other(format!("PDF page access error: {}", e)))?;
+
+    // Render the page to a bitmap at 72 DPI (standard screen resolution)
+    let render_config = PdfRenderConfig::new()
+        .set_target_width(1024)
+        .set_maximum_height(1024);
+
+    let bitmap = page
+        .render_with_config(&render_config)
+        .map_err(|e| io::Error::other(format!("PDF rendering error: {}", e)))?;
+
+    // Convert bitmap to image::DynamicImage
+    let width = bitmap.width() as u32;
+    let height = bitmap.height() as u32;
+
+    // Get RGBA bytes from the bitmap
+    let buffer = bitmap.as_raw_bytes();
+
+    // Create an RGBA image from the buffer
+    let img_buffer = image::RgbaImage::from_vec(width, height, buffer.to_vec())
+        .ok_or_else(|| io::Error::other("Failed to create image from PDF bitmap"))?;
+
+    Ok(DynamicImage::ImageRgba8(img_buffer))
+}
+
+/// Generates a PDF preview by rendering the first page as ASCII art
+pub fn generate_pdf_preview(file_entry: &FileEntry) -> io::Result<Vec<String>> {
+    // Try to render the PDF
+    match render_pdf_first_page(&file_entry.path) {
+        Ok(img) => {
+            let (original_width, original_height) = img.dimensions();
+
+            let (new_width, new_height) = calculate_resize_dimensions(
+                original_width,
+                original_height,
+                MAX_IMAGE_WIDTH,
+                MAX_IMAGE_HEIGHT,
+            );
+
+            let mut preview = vec![
+                format!("PDF: {}", file_entry.name),
+                format!("Size: {} bytes", file_entry.size),
+                format!(
+                    "Preview: First page rendered at {}x{} pixels",
+                    original_width, original_height
+                ),
+                String::new(),
+            ];
+
+            // Generate ASCII art from the rendered page
+            let ascii_art = image_to_ascii(&img, new_width, new_height);
+            preview.extend(ascii_art);
+
+            Ok(preview)
+        }
+        Err(e) => {
+            // If PDF rendering fails, return error information
+            Ok(vec![
+                format!("PDF: {}", file_entry.name),
+                format!("Size: {} bytes", file_entry.size),
+                String::new(),
+                format!("Error rendering PDF: {}", e),
+                String::new(),
+                "[This PDF may be corrupted, password-protected, or use unsupported features]"
+                    .to_string(),
+            ])
+        }
+    }
+}
+
 /// Generates a preview for any file type
 pub fn generate_preview(file_entry: &FileEntry) -> io::Result<Vec<String>> {
     use crate::domain::FileType;
@@ -177,12 +269,7 @@ pub fn generate_preview(file_entry: &FileEntry) -> io::Result<Vec<String>> {
             "[Binary content not displayed]".to_string(),
         ]),
         FileType::Image => generate_image_preview(file_entry),
-        FileType::Pdf => Ok(vec![
-            format!("PDF file: {}", file_entry.name),
-            format!("Size: {} bytes", file_entry.size),
-            String::new(),
-            "[PDF preview not yet implemented]".to_string(),
-        ]),
+        FileType::Pdf => generate_pdf_preview(file_entry),
     }
 }
 
@@ -331,9 +418,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_preview_pdf() {
+    fn test_generate_preview_pdf_dispatches_correctly() {
+        // Test that generate_preview correctly dispatches PDF files to generate_pdf_preview
+        // Uses a non-existent file which will result in an error preview
         let file_entry = FileEntry {
-            path: PathBuf::from("test.pdf"),
+            path: PathBuf::from("/nonexistent/test.pdf"),
             name: "test.pdf".to_string(),
             size: 4096,
             modified_date: Utc::now(),
@@ -341,11 +430,18 @@ mod tests {
         };
 
         let preview = generate_preview(&file_entry).unwrap();
-        assert!(preview.len() > 0);
-        assert!(preview[0].contains("PDF file"));
-        assert!(preview
-            .iter()
-            .any(|line| line.contains("not yet implemented")));
+        assert!(!preview.is_empty());
+        // Should contain PDF reference in header
+        assert!(preview[0].contains("PDF"));
+        // Non-existent file will show error message about rendering
+        let preview_text = preview.join(" ");
+        assert!(
+            preview_text.contains("Error")
+                || preview_text.contains("corrupted")
+                || preview_text.contains("not available"),
+            "Expected error message for non-existent PDF: {}",
+            preview_text
+        );
     }
 
     // Image preview tests
@@ -511,5 +607,189 @@ mod tests {
         assert!(preview.len() > 0);
         assert!(preview[0].contains("Image"));
         assert!(preview[1].contains("50x50"));
+    }
+
+    // PDF preview tests
+    #[test]
+    fn test_render_pdf_first_page_nonexistent() {
+        // Skip test if Pdfium library is not available
+        if !is_pdfium_available() {
+            eprintln!("Skipping PDF test: Pdfium library not available");
+            return;
+        }
+
+        let result = render_pdf_first_page(Path::new("/nonexistent/file.pdf"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_render_pdf_first_page_with_real_pdf() {
+        use printpdf::*;
+        use tempfile::TempDir;
+
+        // Skip test if Pdfium library is not available
+        if !is_pdfium_available() {
+            eprintln!("Skipping PDF test: Pdfium library not available");
+            return;
+        }
+
+        // Create a temporary directory and a simple PDF
+        let temp_dir = TempDir::new().unwrap();
+        let pdf_path = temp_dir.path().join("test.pdf");
+
+        // Create a simple PDF with one page
+        let (doc, _page1, _layer1) = PdfDocument::new("Test PDF", Mm(210.0), Mm(297.0), "Layer 1");
+
+        // Save the PDF
+        doc.save(&mut std::io::BufWriter::new(
+            std::fs::File::create(&pdf_path).unwrap(),
+        ))
+        .unwrap();
+
+        // Test rendering the PDF
+        let result = render_pdf_first_page(&pdf_path);
+        assert!(result.is_ok());
+
+        let img = result.unwrap();
+        let (width, height) = img.dimensions();
+        assert!(width > 0);
+        assert!(height > 0);
+    }
+
+    #[test]
+    fn test_generate_pdf_preview_with_real_pdf() {
+        use printpdf::*;
+        use tempfile::TempDir;
+
+        // Skip test if Pdfium library is not available
+        if !is_pdfium_available() {
+            eprintln!("Skipping PDF test: Pdfium library not available");
+            return;
+        }
+
+        // Create a temporary directory and a simple PDF
+        let temp_dir = TempDir::new().unwrap();
+        let pdf_path = temp_dir.path().join("document.pdf");
+
+        // Create a simple PDF with one page
+        let (doc, _page1, _layer1) =
+            PdfDocument::new("Test Document", Mm(210.0), Mm(297.0), "Layer 1");
+
+        // Save the PDF
+        doc.save(&mut std::io::BufWriter::new(
+            std::fs::File::create(&pdf_path).unwrap(),
+        ))
+        .unwrap();
+
+        let file_entry = FileEntry {
+            path: pdf_path.clone(),
+            name: "document.pdf".to_string(),
+            size: fs::metadata(&pdf_path).unwrap().len(),
+            modified_date: Utc::now(),
+            file_type: FileType::Pdf,
+        };
+
+        let preview = generate_pdf_preview(&file_entry).unwrap();
+
+        // Check that preview has header information
+        assert!(preview.len() > 0);
+        assert!(preview[0].contains("PDF"));
+        assert!(preview[0].contains("document.pdf"));
+        assert!(preview[1].contains("bytes"));
+
+        // Should have ASCII art (more than just header lines)
+        assert!(preview.len() > 4);
+    }
+
+    #[test]
+    fn test_generate_pdf_preview_nonexistent() {
+        let file_entry = FileEntry {
+            path: PathBuf::from("/nonexistent/file.pdf"),
+            name: "file.pdf".to_string(),
+            size: 0,
+            modified_date: Utc::now(),
+            file_type: FileType::Pdf,
+        };
+
+        let preview = generate_pdf_preview(&file_entry).unwrap();
+
+        // Should still return a preview (with error message)
+        assert!(preview.len() > 0);
+        assert!(preview[0].contains("PDF"));
+
+        // Should mention error
+        let preview_text = preview.join(" ");
+        assert!(
+            preview_text.contains("Error") || preview_text.contains("corrupted"),
+            "Expected error message in preview"
+        );
+    }
+
+    #[test]
+    fn test_generate_pdf_preview_invalid_pdf() {
+        use tempfile::TempDir;
+
+        // Create a temporary directory and an invalid "PDF" file
+        let temp_dir = TempDir::new().unwrap();
+        let pdf_path = temp_dir.path().join("invalid.pdf");
+
+        // Write invalid content (not a real PDF)
+        fs::write(&pdf_path, b"This is not a valid PDF file").unwrap();
+
+        let file_entry = FileEntry {
+            path: pdf_path.clone(),
+            name: "invalid.pdf".to_string(),
+            size: fs::metadata(&pdf_path).unwrap().len(),
+            modified_date: Utc::now(),
+            file_type: FileType::Pdf,
+        };
+
+        let preview = generate_pdf_preview(&file_entry).unwrap();
+
+        // Should return error preview
+        assert!(preview.len() > 0);
+        let preview_text = preview.join(" ");
+        assert!(
+            preview_text.contains("Error") || preview_text.contains("corrupted"),
+            "Expected error message for invalid PDF"
+        );
+    }
+
+    #[test]
+    fn test_generate_preview_pdf_integration() {
+        use printpdf::*;
+        use tempfile::TempDir;
+
+        // Skip test if Pdfium library is not available
+        if !is_pdfium_available() {
+            eprintln!("Skipping PDF test: Pdfium library not available");
+            return;
+        }
+
+        // Create a temporary directory and a simple PDF
+        let temp_dir = TempDir::new().unwrap();
+        let pdf_path = temp_dir.path().join("report.pdf");
+
+        // Create a simple PDF
+        let (doc, _page1, _layer1) = PdfDocument::new("Report", Mm(210.0), Mm(297.0), "Layer 1");
+
+        doc.save(&mut std::io::BufWriter::new(
+            std::fs::File::create(&pdf_path).unwrap(),
+        ))
+        .unwrap();
+
+        let file_entry = FileEntry {
+            path: pdf_path.clone(),
+            name: "report.pdf".to_string(),
+            size: fs::metadata(&pdf_path).unwrap().len(),
+            modified_date: Utc::now(),
+            file_type: FileType::Pdf,
+        };
+
+        let preview = generate_preview(&file_entry).unwrap();
+
+        // Verify that generate_preview dispatches to generate_pdf_preview
+        assert!(preview.len() > 0);
+        assert!(preview[0].contains("PDF"));
     }
 }
