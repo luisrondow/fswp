@@ -1,4 +1,4 @@
-# File Tinder - TDD Implementation Plan
+# Fswp - TDD Implementation Plan
 
 ## Overview
 A terminal-based file decluttering app built in Rust using TDD methodology. Each phase creates a feature branch, pushes to remote, and waits for user approval before proceeding.

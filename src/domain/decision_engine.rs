@@ -21,7 +21,7 @@ impl DecisionEngine {
             .unwrap()
             .as_nanos();
         let staging_dir =
-            std::env::temp_dir().join(format!("file-tinder-{}-{}", std::process::id(), timestamp));
+            std::env::temp_dir().join(format!("fswp-{}-{}", std::process::id(), timestamp));
         fs::create_dir_all(&staging_dir).ok();
 
         Self {
