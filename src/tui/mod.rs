@@ -235,6 +235,83 @@ pub fn render_help_overlay(frame: &mut Frame) {
     frame.render_widget(paragraph, inner);
 }
 
+/// Renders a loading overlay
+pub fn render_loading_overlay(frame: &mut Frame, file: &crate::domain::FileEntry) {
+    let area = frame.area();
+    let loading_area = centered_rect(40, 30, area);
+
+    // Clear background
+    frame.render_widget(Clear, loading_area);
+
+    let block = Block::default()
+        .title(" Loading Preview ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT_HIGHLIGHT))
+        .style(Style::default().bg(BG_DARK));
+
+    let inner = block.inner(loading_area);
+    frame.render_widget(block, loading_area);
+
+    // Simple animation based on current time
+    let spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let spinner_idx = (now / 100) as usize % spinners.len();
+    let spinner = spinners[spinner_idx];
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!("  {} ", spinner),
+                Style::default().fg(ACCENT_HIGHLIGHT),
+            ),
+            Span::styled("Processing file", Style::default().fg(TEXT_PRIMARY)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Name: ", Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(
+                &file.name,
+                Style::default()
+                    .fg(TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Size: ", Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(
+                format_file_size(file.size),
+                Style::default().fg(TEXT_PRIMARY),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Type: ", Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(
+                format!("{:?}", file.file_type),
+                Style::default().fg(TEXT_PRIMARY),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Please wait...",
+            Style::default()
+                .fg(TEXT_SECONDARY)
+                .add_modifier(Modifier::ITALIC),
+        )),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .style(Style::default().fg(TEXT_PRIMARY));
+
+    frame.render_widget(paragraph, inner);
+}
+
 /// Helper to create a centered rect
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -422,72 +499,77 @@ fn render_content_async(
 ) {
     use crate::preview::PreviewContent;
 
-    let content = if let Some(file) = state.current_file() {
+    if let Some(file) = state.current_file() {
         // Get preview state from manager
         let preview_state = preview_manager.request_preview(file);
 
-        let (lines, title_suffix, border_color): (Vec<Line>, &str, ratatui::style::Color) =
-            match preview_state {
-                PreviewState::Loading => {
-                    let loading_lines = generate_loading_indicator(file);
-                    let lines: Vec<Line> = loading_lines.into_iter().map(Line::from).collect();
-                    (lines, " ...", ACCENT_HIGHLIGHT)
-                }
-                PreviewState::Ready(preview_content) => {
-                    let lines = match preview_content {
-                        PreviewContent::Text(text_lines) => {
-                            text_lines.iter().map(|s| Line::from(s.clone())).collect()
-                        }
-                        PreviewContent::Styled(styled_lines) => styled_lines.clone(),
-                    };
-                    (lines, "", BORDER_COLOR)
-                }
-                PreviewState::Error(e) => {
-                    let error_lines: Vec<Line> = vec![
-                        Line::from(""),
-                        Line::from("  [!] Error generating preview"),
-                        Line::from(""),
-                        Line::from(format!("  {}", e)),
-                        Line::from(""),
-                        Line::from(format!("  File: {}", file.name)),
-                        Line::from(format!("  Path: {}", file.path.display())),
-                        Line::from(format!("  Size: {}", format_file_size(file.size))),
-                        Line::from(format!("  Type: {:?}", file.file_type)),
-                    ];
-                    (error_lines, " [!]", ACCENT_PRIMARY)
-                }
-            };
-
-        Paragraph::new(lines)
-            .block(
-                Block::default()
+        match preview_state {
+            PreviewState::Loading => {
+                // Render an empty block for content first
+                let content_block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border_color))
-                    .title(format!(" {}{} ", file.name, title_suffix)),
-            )
-            .style(Style::default().fg(TEXT_PRIMARY))
-            .wrap(Wrap { trim: false })
+                    .border_style(Style::default().fg(BORDER_COLOR))
+                    .title(format!(" {} ", file.name));
+                frame.render_widget(content_block, area);
+
+                // Then render the loading overlay
+                render_loading_overlay(frame, file);
+            }
+            PreviewState::Ready(preview_content) => {
+                let lines = match preview_content {
+                    PreviewContent::Text(text_lines) => {
+                        text_lines.iter().map(|s| Line::from(s.clone())).collect()
+                    }
+                    PreviewContent::Styled(styled_lines) => styled_lines.clone(),
+                };
+
+                let paragraph = Paragraph::new(lines)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(BORDER_COLOR))
+                            .title(format!(" {} ", file.name)),
+                    )
+                    .style(Style::default().fg(TEXT_PRIMARY))
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(paragraph, area);
+            }
+            PreviewState::Error(e) => {
+                let error_lines: Vec<Line> = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  [!] Error generating preview",
+                        Style::default()
+                            .fg(ACCENT_PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(format!("  {}", e)),
+                    Line::from(""),
+                    Line::from(format!("  File: {}", file.name)),
+                    Line::from(format!("  Path: {}", file.path.display())),
+                    Line::from(format!("  Size: {}", format_file_size(file.size))),
+                    Line::from(format!("  Type: {:?}", file.file_type)),
+                ];
+
+                let paragraph = Paragraph::new(error_lines)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(ACCENT_PRIMARY))
+                            .title(format!(" {} [!] ", file.name)),
+                    )
+                    .style(Style::default().fg(TEXT_PRIMARY))
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(paragraph, area);
+            }
+        }
     } else {
-        render_empty_state_widget()
-    };
-
-    frame.render_widget(content, area);
-}
-
-/// Generates a loading indicator for file preview
-fn generate_loading_indicator(file: &crate::domain::FileEntry) -> Vec<String> {
-    vec![
-        String::new(),
-        String::new(),
-        format!("  Loading preview..."),
-        String::new(),
-        format!("  Processing: {}", file.name),
-        String::new(),
-        format!("  Type: {:?}", file.file_type),
-        format!("  Size: {}", format_file_size(file.size)),
-        format!("  Path: {}", file.path.display()),
-    ]
+        frame.render_widget(render_empty_state_widget(), area);
+    }
 }
 
 /// Renders the polished footer with styled controls
@@ -700,6 +782,28 @@ mod tests {
 
             // Check for summary content
             assert!(buffer_str.contains("Summary") || buffer_str.contains("Complete"));
+        }
+
+        #[test]
+        fn test_render_loading_overlay() {
+            let file = create_test_entry("test_image.png");
+            let backend = TestBackend::new(80, 30);
+            let mut terminal = Terminal::new(backend).unwrap();
+
+            terminal
+                .draw(|frame| {
+                    render_loading_overlay(frame, &file);
+                })
+                .unwrap();
+
+            let buffer = terminal.backend().buffer().clone();
+            let content = buffer.content();
+            let buffer_str: String = content.iter().map(|c| c.symbol()).collect();
+
+            // Check for loading content
+            assert!(buffer_str.contains("Loading"));
+            assert!(buffer_str.contains("test_image.png"));
+            assert!(buffer_str.contains("Processing"));
         }
     }
 }

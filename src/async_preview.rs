@@ -315,6 +315,8 @@ pub struct SyncPreviewManager {
     current_state: PreviewState,
     /// Path of the file we're currently showing/loading
     current_path: Option<PathBuf>,
+    /// Receiver for the current pending preview request
+    receiver: Option<oneshot::Receiver<PreviewState>>,
 }
 
 impl SyncPreviewManager {
@@ -328,65 +330,86 @@ impl SyncPreviewManager {
             runtime,
             current_state: PreviewState::Loading,
             current_path: None,
+            receiver: None,
         }
     }
 
-    /// Request a preview for a file, returns current state
+    /// Request a preview for a file, returns current state (non-blocking)
     pub fn request_preview(&mut self, file_entry: &FileEntry) -> &PreviewState {
         let path = file_entry.path.clone();
 
-        // If same path, return current state
-        if self.current_path.as_ref() == Some(&path) {
-            return &self.current_state;
+        // If different path, start new request
+        if self.current_path.as_ref() != Some(&path) {
+            // Cancel previous if any
+            if self.current_path.is_some() {
+                self.runtime.block_on(self.loader.cancel_current());
+            }
+
+            self.current_path = Some(path.clone());
+            self.receiver = None;
+
+            // Check cache first (sync/block_on lock but fast)
+            if let Some(cached) = self.runtime.block_on(self.loader.get_cached(&path)) {
+                self.current_state = PreviewState::Ready(cached);
+                return &self.current_state;
+            }
+
+            // Start loading in background
+            self.current_state = PreviewState::Loading;
+
+            let (tx, rx) = oneshot::channel();
+            let loader = self.loader.clone();
+            let file_entry_clone = file_entry.clone();
+
+            // Send request to background worker
+            let request = PreviewRequest::Load {
+                file_entry: file_entry_clone,
+                response_tx: tx,
+            };
+
+            // Send request (using block_on for the Send itself to ensure it's queued)
+            let _ = self
+                .runtime
+                .block_on(async move { loader.request_tx.send(request).await });
+
+            self.receiver = Some(rx);
         }
 
-        // Cancel previous if different
-        if self.current_path.is_some() {
-            self.runtime.block_on(self.loader.cancel_current());
+        // If we're loading, check if the receiver has a value
+        if matches!(self.current_state, PreviewState::Loading) {
+            if let Some(ref mut rx) = self.receiver {
+                match rx.try_recv() {
+                    Ok(state) => {
+                        self.current_state = state;
+                        self.receiver = None;
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {
+                        // Still loading, check if cache has it (maybe from elsewhere)
+                        if let Some(cached) = self.runtime.block_on(self.loader.get_cached(&path)) {
+                            self.current_state = PreviewState::Ready(cached);
+                            self.receiver = None;
+                        }
+                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        // Channel closed, try checking cache one last time
+                        if let Some(cached) = self.runtime.block_on(self.loader.get_cached(&path)) {
+                            self.current_state = PreviewState::Ready(cached);
+                        } else {
+                            self.current_state =
+                                PreviewState::Error("Preview channel closed".to_string());
+                        }
+                        self.receiver = None;
+                    }
+                }
+            }
         }
-
-        // Update current path
-        self.current_path = Some(path.clone());
-
-        // Check cache first (sync)
-        if let Some(cached) = self.runtime.block_on(self.loader.get_cached(&path)) {
-            self.current_state = PreviewState::Ready(cached);
-            return &self.current_state;
-        }
-
-        // Start loading
-        self.current_state = PreviewState::Loading;
-
-        // Spawn async task to load
-        let file_entry_clone = file_entry.clone();
-        let state = self
-            .runtime
-            .block_on(self.loader.request_preview(&file_entry_clone));
-        self.current_state = state;
 
         &self.current_state
     }
 
-    /// Poll for preview completion (non-blocking)
+    /// Poll for preview completion (non-blocking) - now identical to request_preview for simplicity
     pub fn poll_preview(&mut self, file_entry: &FileEntry) -> &PreviewState {
-        let path = file_entry.path.clone();
-
-        // If different file, start new request
-        if self.current_path.as_ref() != Some(&path) {
-            return self.request_preview(file_entry);
-        }
-
-        // If already ready or error, return current state
-        match &self.current_state {
-            PreviewState::Ready(_) | PreviewState::Error(_) => &self.current_state,
-            PreviewState::Loading => {
-                // Check if cache has been populated
-                if let Some(cached) = self.runtime.block_on(self.loader.get_cached(&path)) {
-                    self.current_state = PreviewState::Ready(cached);
-                }
-                &self.current_state
-            }
-        }
+        self.request_preview(file_entry)
     }
 
     /// Get the current preview state
@@ -401,6 +424,7 @@ impl SyncPreviewManager {
         }
         self.current_path = None;
         self.current_state = PreviewState::Loading;
+        self.receiver = None;
     }
 
     /// Get cache size
@@ -660,10 +684,23 @@ mod tests {
             let file_entry = create_test_file_entry(file_path, "test.txt", FileType::Text);
 
             let mut manager = SyncPreviewManager::new();
-            let state = manager.request_preview(&file_entry);
 
-            // Should complete and return ready state
-            assert!(matches!(state, PreviewState::Ready(_)));
+            // First request should be Loading
+            let state = manager.request_preview(&file_entry);
+            assert!(matches!(state, PreviewState::Loading));
+
+            // Poll until ready (with timeout)
+            let mut ready = false;
+            for _ in 0..10 {
+                let state = manager.poll_preview(&file_entry);
+                if matches!(state, PreviewState::Ready(_)) {
+                    ready = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
+            assert!(ready, "Preview should be ready within timeout");
         }
 
         #[test]
@@ -678,9 +715,19 @@ mod tests {
 
             // First request
             let _ = manager.request_preview(&file_entry);
-            assert_eq!(manager.cache_size(), 1);
 
-            // Second request (same file)
+            // Wait for it to be cached
+            let mut cached = false;
+            for _ in 0..10 {
+                if manager.cache_size() > 0 {
+                    cached = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(cached, "Result should be cached within timeout");
+
+            // Second request (same file) should be Ready immediately
             let state = manager.request_preview(&file_entry);
             assert!(matches!(state, PreviewState::Ready(_)));
         }
@@ -715,12 +762,32 @@ mod tests {
             let mut manager = SyncPreviewManager::new();
 
             // Load first file
-            let state1 = manager.request_preview(&entry1);
-            assert!(matches!(state1, PreviewState::Ready(_)));
+            manager.request_preview(&entry1);
+
+            // Poll until ready
+            let mut ready = false;
+            for _ in 0..10 {
+                if matches!(manager.poll_preview(&entry1), PreviewState::Ready(_)) {
+                    ready = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(ready, "First file should be ready");
 
             // Load second file
-            let state2 = manager.request_preview(&entry2);
-            assert!(matches!(state2, PreviewState::Ready(_)));
+            manager.request_preview(&entry2);
+
+            // Poll until ready
+            ready = false;
+            for _ in 0..10 {
+                if matches!(manager.poll_preview(&entry2), PreviewState::Ready(_)) {
+                    ready = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(ready, "Second file should be ready");
 
             // Both should be cached
             assert_eq!(manager.cache_size(), 2);
