@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-File Tinder is a terminal-based file decluttering application built in Rust. It presents a "Tinder-like" interface where users can quickly review files one-by-one and decide to keep or trash them using keyboard shortcuts. The project is **complete through Phase 11** with all core features implemented and a modular refactoring applied.
+fswp is a terminal-based file decluttering application built in Rust. It presents a "Tinder-like" interface where users can quickly review files one-by-one and decide to keep or trash them using keyboard shortcuts. The project is **complete through Phase 11** with all core features implemented and a modular refactoring applied.
 
 ## Development Commands
 
@@ -309,7 +309,7 @@ To add support for a new file type category:
 ## CLI Usage
 
 ```bash
-file-tinder [OPTIONS] [DIRECTORY]
+fswp [OPTIONS] [DIRECTORY]
 
 Arguments:
   [DIRECTORY]  Target directory [default: .]
@@ -329,11 +329,11 @@ Options:
 ### Examples
 ```bash
 # Review files in Downloads, images only, largest first
-file-tinder ~/Downloads --type image --sort size --reverse
+fswp ~/Downloads --type image --sort size --reverse
 
 # Dry run on current directory, files over 10MB
-file-tinder . --dry-run --min-size 10MB
+fswp . --dry-run --min-size 10MB
 
 # Include hidden files, sort by name
-file-tinder ~/Documents --hidden --sort name
+fswp ~/Documents --hidden --sort name
 ```

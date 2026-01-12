@@ -5,11 +5,11 @@ use crate::domain::FileType;
 use clap::{ArgAction, Parser, ValueEnum};
 use std::path::PathBuf;
 
-/// File Tinder - A terminal-based file decluttering tool
+/// Fswp - A terminal-based file decluttering tool
 ///
 /// Swipe through your files Tinder-style: keep what you love, trash what you don't.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "file-tinder")]
+#[command(name = "fswp")]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Directory to scan for files

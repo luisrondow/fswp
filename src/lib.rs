@@ -1,6 +1,6 @@
-//! File Tinder - A terminal-based file decluttering library
+//! Fswp - A terminal-based file decluttering library
 //!
-//! This crate provides the core functionality for the File Tinder application,
+//! This crate provides the core functionality for the Fswp application,
 //! enabling programmatic file review and organization workflows.
 
 pub mod async_preview;

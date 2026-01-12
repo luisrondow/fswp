@@ -1,9 +1,9 @@
-use file_tinder::async_preview::SyncPreviewManager;
-use file_tinder::cli::{AppConfig, Args, SortOrder};
-use file_tinder::domain::{
+use fswp::async_preview::SyncPreviewManager;
+use fswp::cli::{AppConfig, Args, SortOrder};
+use fswp::domain::{
     discover_files_with_options, AppState, Decision, DecisionEngine, DiscoveryOptions, SortBy,
 };
-use file_tinder::tui::{
+use fswp::tui::{
     handle_key_event, render_help_overlay, render_summary, render_with_preview, KeyAction,
     ViewState,
 };

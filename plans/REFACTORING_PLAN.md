@@ -110,7 +110,7 @@ path = "src/main.rs"
 
 **lib.rs structure:**
 ```rust
-//! File Tinder - A terminal-based file decluttering library
+//! Fswp - A terminal-based file decluttering library
 
 pub mod domain;
 pub mod error;

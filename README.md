@@ -1,4 +1,4 @@
-# File Tinder 🗂️💘
+# fswp 🗂️💘
 
 A fast, keyboard-centric terminal application for decluttering directories using a "Tinder-like" swipe interface. Review files one by one and make rapid decisions to **Keep** or **Trash** them, with rich previews directly in your terminal.
 
@@ -26,7 +26,7 @@ cd dating-files
 cargo build --release
 ```
 
-The binary will be available at `target/release/file-tinder`.
+The binary will be available at `target/release/fswp`.
 
 ### Optional: PDF Support
 
@@ -43,9 +43,9 @@ Download from [pdfium-binaries](https://github.com/AprliRawormd/pdfium-binaries/
 ## 🚀 Usage
 
 ```
-File Tinder - A terminal-based file decluttering tool
+Fswp - A terminal-based file decluttering tool
 
-Usage: file-tinder [OPTIONS] [DIRECTORY]
+Usage: fswp [OPTIONS] [DIRECTORY]
 
 Arguments:
   [DIRECTORY]
@@ -108,34 +108,34 @@ Options:
 
 ```bash
 # Review all files in the current directory
-file-tinder
+fswp
 
 # Review files in a specific directory
-file-tinder ~/Downloads
+fswp ~/Downloads
 
 # Review only text files
-file-tinder --type text ~/Documents
+fswp --type text ~/Documents
 
 # Review images and PDFs
-file-tinder -t image -t pdf ~/Pictures
+fswp -t image -t pdf ~/Pictures
 
 # Dry run - see what would happen without moving files
-file-tinder --dry-run ~/Downloads
+fswp --dry-run ~/Downloads
 
 # Review large images only (over 5MB)
-file-tinder --type image --min-size 5MB ~/Photos
+fswp --type image --min-size 5MB ~/Photos
 
 # Review old files first (sorted by date)
-file-tinder --sort date ~/Archive
+fswp --sort date ~/Archive
 
 # Review newest files first
-file-tinder --sort date --reverse .
+fswp --sort date --reverse .
 
 # Include hidden files, sorted by name
-file-tinder --hidden --sort name ~/config
+fswp --hidden --sort name ~/config
 
 # Find files between 1MB and 100MB
-file-tinder --min-size 1MB --max-size 100MB ~/Downloads
+fswp --min-size 1MB --max-size 100MB ~/Downloads
 ```
 
 ## ⌨️ Keyboard Shortcuts

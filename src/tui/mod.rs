@@ -285,7 +285,7 @@ fn render_header_polished(frame: &mut Frame, area: Rect, state: &AppState) {
         )
     } else {
         (
-            " File Tinder ".to_string(),
+            " Fswp ".to_string(),
             vec![Span::styled(
                 "No files to review",
                 Style::default().fg(TEXT_SECONDARY),
