@@ -9,6 +9,10 @@ pub enum KeyAction {
     Keep,
     /// Mark current file to trash
     Trash,
+    /// Confirm trash action
+    ConfirmTrash,
+    /// Cancel trash action
+    CancelTrash,
     /// Move to next file
     Next,
     /// Move to previous file
@@ -49,6 +53,24 @@ pub fn handle_key_event(key: KeyEvent) -> KeyAction {
 
         // Help: ?
         (KeyCode::Char('?'), KeyModifiers::NONE) => KeyAction::Help,
+
+        _ => KeyAction::None,
+    }
+}
+
+/// Maps keyboard events to confirmation actions
+/// Used when ViewState is ConfirmTrash
+pub fn handle_confirm_input(key: KeyEvent) -> KeyAction {
+    match (key.code, key.modifiers) {
+        // Confirm: y or Enter
+        (KeyCode::Char('y'), KeyModifiers::NONE) => KeyAction::ConfirmTrash,
+        (KeyCode::Char('Y'), KeyModifiers::NONE) => KeyAction::ConfirmTrash,
+        (KeyCode::Enter, KeyModifiers::NONE) => KeyAction::ConfirmTrash,
+
+        // Cancel: n or Esc
+        (KeyCode::Char('n'), KeyModifiers::NONE) => KeyAction::CancelTrash,
+        (KeyCode::Char('N'), KeyModifiers::NONE) => KeyAction::CancelTrash,
+        (KeyCode::Esc, KeyModifiers::NONE) => KeyAction::CancelTrash,
 
         _ => KeyAction::None,
     }
@@ -122,5 +144,45 @@ mod tests {
     fn test_key_none() {
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
         assert_eq!(handle_key_event(key), KeyAction::None);
+    }
+
+    #[test]
+    fn test_confirm_trash_keys() {
+        // Test y key
+        let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::ConfirmTrash);
+
+        // Test Y key (uppercase)
+        let key = KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::ConfirmTrash);
+
+        // Test Enter key
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::ConfirmTrash);
+    }
+
+    #[test]
+    fn test_cancel_trash_keys() {
+        // Test n key
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::CancelTrash);
+
+        // Test N key (uppercase)
+        let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::CancelTrash);
+
+        // Test Esc key
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::CancelTrash);
+    }
+
+    #[test]
+    fn test_confirm_input_none() {
+        // Test other keys return None
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::None);
+
+        let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(handle_confirm_input(key), KeyAction::None);
     }
 }

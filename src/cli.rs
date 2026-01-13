@@ -51,6 +51,10 @@ pub struct Args {
     /// Maximum file size filter (e.g., "100MB", "1GB")
     #[arg(long = "max-size")]
     pub max_size: Option<String>,
+
+    /// Skip confirmation prompts for trash actions
+    #[arg(short = 'y', long = "yes", action = ArgAction::SetTrue)]
+    pub yes: bool,
 }
 
 /// File type filter options
@@ -208,6 +212,7 @@ pub struct AppConfig {
     pub show_hidden: bool,
     pub min_size: Option<u64>,
     pub max_size: Option<u64>,
+    pub skip_confirm: bool,
 }
 
 impl From<Args> for AppConfig {
@@ -221,6 +226,7 @@ impl From<Args> for AppConfig {
             show_hidden: args.show_hidden,
             min_size: args.get_min_size(),
             max_size: args.get_max_size(),
+            skip_confirm: args.yes,
         }
     }
 }
@@ -236,6 +242,7 @@ impl Default for AppConfig {
             show_hidden: false,
             min_size: None,
             max_size: None,
+            skip_confirm: false,
         }
     }
 }
@@ -305,6 +312,7 @@ mod tests {
                 show_hidden: false,
                 min_size: None,
                 max_size: None,
+                yes: false,
             };
 
             assert_eq!(args.directory, PathBuf::from("."));
@@ -312,7 +320,65 @@ mod tests {
             assert_eq!(args.sort_by, SortOrder::Date);
             assert!(!args.reverse);
             assert!(!args.show_hidden);
+            assert!(!args.yes);
             assert!(args.get_file_type_filters().is_none());
+        }
+
+        #[test]
+        fn test_args_yes_flag() {
+            let args_with_yes = Args {
+                directory: PathBuf::from("."),
+                file_types: vec![],
+                dry_run: false,
+                sort_by: SortOrder::Date,
+                reverse: false,
+                show_hidden: false,
+                min_size: None,
+                max_size: None,
+                yes: true,
+            };
+
+            assert!(args_with_yes.yes);
+        }
+
+        #[test]
+        fn test_config_skip_confirm_propagation() {
+            // Test that skip_confirm is properly set from args.yes
+            let args_no = Args {
+                directory: PathBuf::from("."),
+                file_types: vec![],
+                dry_run: false,
+                sort_by: SortOrder::Date,
+                reverse: false,
+                show_hidden: false,
+                min_size: None,
+                max_size: None,
+                yes: false,
+            };
+
+            let config: AppConfig = args_no.into();
+            assert!(!config.skip_confirm);
+
+            let args_yes = Args {
+                directory: PathBuf::from("."),
+                file_types: vec![],
+                dry_run: false,
+                sort_by: SortOrder::Date,
+                reverse: false,
+                show_hidden: false,
+                min_size: None,
+                max_size: None,
+                yes: true,
+            };
+
+            let config: AppConfig = args_yes.into();
+            assert!(config.skip_confirm);
+        }
+
+        #[test]
+        fn test_config_default_skip_confirm() {
+            let config = AppConfig::default();
+            assert!(!config.skip_confirm);
         }
 
         #[test]
@@ -326,6 +392,7 @@ mod tests {
                 show_hidden: false,
                 min_size: None,
                 max_size: None,
+                yes: false,
             };
 
             assert!(args.get_file_type_filters().is_none());
@@ -342,6 +409,7 @@ mod tests {
                 show_hidden: false,
                 min_size: None,
                 max_size: None,
+                yes: false,
             };
 
             let filters = args.get_file_type_filters().unwrap();
@@ -361,6 +429,7 @@ mod tests {
                 show_hidden: false,
                 min_size: None,
                 max_size: None,
+                yes: false,
             };
 
             let result = args.validate();
@@ -379,6 +448,7 @@ mod tests {
                 show_hidden: false,
                 min_size: Some("invalid".to_string()),
                 max_size: None,
+                yes: false,
             };
 
             let result = args.validate();
@@ -397,6 +467,7 @@ mod tests {
                 show_hidden: false,
                 min_size: Some("10MB".to_string()),
                 max_size: Some("1MB".to_string()),
+                yes: false,
             };
 
             let result = args.validate();
@@ -415,6 +486,7 @@ mod tests {
                 show_hidden: false,
                 min_size: Some("1KB".to_string()),
                 max_size: Some("100MB".to_string()),
+                yes: false,
             };
 
             assert!(args.validate().is_ok());
@@ -435,6 +507,7 @@ mod tests {
                 show_hidden: true,
                 min_size: Some("1KB".to_string()),
                 max_size: Some("1MB".to_string()),
+                yes: false,
             };
 
             let config: AppConfig = args.into();

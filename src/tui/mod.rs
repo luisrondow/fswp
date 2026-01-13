@@ -6,7 +6,7 @@ pub mod input;
 // Re-exports
 pub use colors::*;
 pub use helpers::{calculate_progress, format_file_size};
-pub use input::{handle_key_event, KeyAction};
+pub use input::{handle_confirm_input, handle_key_event, KeyAction};
 
 use crate::async_preview::{PreviewState, SyncPreviewManager};
 use crate::domain::{AppState, DecisionStatistics};
@@ -28,6 +28,8 @@ pub enum ViewState {
     Help,
     /// Summary screen at end
     Summary,
+    /// Confirmation dialog for trash action
+    ConfirmTrash,
 }
 
 /// Renders the TUI (legacy, without async preview)
@@ -229,6 +231,83 @@ pub fn render_help_overlay(frame: &mut Frame) {
     ];
 
     let paragraph = Paragraph::new(help_lines)
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(TEXT_PRIMARY));
+
+    frame.render_widget(paragraph, inner);
+}
+
+/// Renders the confirmation dialog for trash action
+pub fn render_confirm_trash_overlay(frame: &mut Frame, file: &crate::domain::FileEntry) {
+    let area = frame.area();
+    let confirm_area = centered_rect(50, 60, area);
+
+    // Clear background
+    frame.render_widget(Clear, confirm_area);
+
+    let block = Block::default()
+        .title(" ⚠ Confirm Trash ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT_PRIMARY))
+        .style(Style::default().bg(BG_DARK));
+
+    let inner = block.inner(confirm_area);
+    frame.render_widget(block, confirm_area);
+
+    let confirm_lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Are you sure you want to trash this file?",
+            Style::default()
+                .fg(TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  File: ", Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(&file.name, Style::default().fg(TEXT_PRIMARY)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Size: ", Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(
+                format_file_size(file.size),
+                Style::default().fg(TEXT_PRIMARY),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Type: ", Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(
+                format!("{:?}", file.file_type),
+                Style::default().fg(TEXT_PRIMARY),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "This file will be moved to trash.",
+            Style::default().fg(TEXT_SECONDARY),
+        )),
+        Line::from(Span::styled(
+            "You can undo this action with 'u'.",
+            Style::default().fg(TEXT_SECONDARY),
+        )),
+        Line::from(""),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[Y]", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("es  "),
+            Span::styled("[Enter]", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("     "),
+            Span::styled("[N]", Style::default().fg(ACCENT_PRIMARY)),
+            Span::raw("o  "),
+            Span::styled("[Esc]", Style::default().fg(ACCENT_PRIMARY)),
+        ]),
+        Line::from(""),
+    ];
+
+    let paragraph = Paragraph::new(confirm_lines)
         .alignment(Alignment::Center)
         .style(Style::default().fg(TEXT_PRIMARY));
 

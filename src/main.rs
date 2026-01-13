@@ -4,8 +4,8 @@ use fswp::domain::{
     discover_files_with_options, AppState, Decision, DecisionEngine, DiscoveryOptions, SortBy,
 };
 use fswp::tui::{
-    handle_key_event, render_help_overlay, render_summary, render_with_preview, KeyAction,
-    ViewState,
+    handle_confirm_input, handle_key_event, render_confirm_trash_overlay, render_help_overlay,
+    render_summary, render_with_preview, KeyAction, ViewState,
 };
 
 use crossterm::{
@@ -92,6 +92,7 @@ pub fn run_app_with_config(config: &AppConfig) -> io::Result<()> {
         &mut app_state,
         &mut decision_engine,
         &mut preview_manager,
+        config,
     );
 
     // Restore terminal
@@ -116,6 +117,7 @@ fn run_loop<B: ratatui::backend::Backend>(
     app_state: &mut AppState,
     decision_engine: &mut DecisionEngine,
     preview_manager: &mut SyncPreviewManager,
+    config: &AppConfig,
 ) -> io::Result<()> {
     let mut view_state = ViewState::Browsing;
 
@@ -130,6 +132,11 @@ fn run_loop<B: ratatui::backend::Backend>(
                 ViewState::Summary => {
                     let stats = decision_engine.get_statistics();
                     render_summary(frame, &stats);
+                }
+                ViewState::ConfirmTrash => {
+                    if let Some(file) = app_state.current_file() {
+                        render_confirm_trash_overlay(frame, file);
+                    }
                 }
                 ViewState::Browsing => {}
             }
@@ -151,6 +158,35 @@ fn run_loop<B: ratatui::backend::Backend>(
                     ViewState::Summary => {
                         // Any key exits from summary
                         break;
+                    }
+                    ViewState::ConfirmTrash => {
+                        let action = handle_confirm_input(key);
+                        match action {
+                            KeyAction::ConfirmTrash => {
+                                // Execute trash decision
+                                if decision_engine
+                                    .record_decision(app_state.current_index, Decision::Trash)
+                                    .is_ok()
+                                {
+                                    app_state.record_decision(Decision::Trash);
+                                    app_state.next();
+                                    preview_manager.reset();
+
+                                    if is_all_files_processed(app_state, decision_engine) {
+                                        view_state = ViewState::Summary;
+                                    } else {
+                                        view_state = ViewState::Browsing;
+                                    }
+                                } else {
+                                    view_state = ViewState::Browsing;
+                                }
+                            }
+                            KeyAction::CancelTrash => {
+                                view_state = ViewState::Browsing;
+                            }
+                            _ => {}
+                        }
+                        continue;
                     }
                     ViewState::Browsing => {}
                 }
@@ -183,18 +219,25 @@ fn run_loop<B: ratatui::backend::Backend>(
                         }
                     }
                     KeyAction::Trash => {
-                        if decision_engine
-                            .record_decision(app_state.current_index, Decision::Trash)
-                            .is_ok()
-                        {
-                            app_state.record_decision(Decision::Trash);
-                            app_state.next();
-                            preview_manager.reset();
+                        // Skip confirmation if flag set or dry-run mode
+                        if config.skip_confirm || decision_engine.is_dry_run() {
+                            // Execute trash immediately
+                            if decision_engine
+                                .record_decision(app_state.current_index, Decision::Trash)
+                                .is_ok()
+                            {
+                                app_state.record_decision(Decision::Trash);
+                                app_state.next();
+                                preview_manager.reset();
 
-                            // Check if we've processed all files
-                            if is_all_files_processed(app_state, decision_engine) {
-                                view_state = ViewState::Summary;
+                                // Check if we've processed all files
+                                if is_all_files_processed(app_state, decision_engine) {
+                                    view_state = ViewState::Summary;
+                                }
                             }
+                        } else {
+                            // Show confirmation dialog
+                            view_state = ViewState::ConfirmTrash;
                         }
                     }
                     KeyAction::Next => {
@@ -217,6 +260,10 @@ fn run_loop<B: ratatui::backend::Backend>(
                     }
                     KeyAction::Help => {
                         view_state = ViewState::Help;
+                    }
+                    KeyAction::ConfirmTrash | KeyAction::CancelTrash => {
+                        // These actions are only handled in ConfirmTrash state
+                        // Ignore them here
                     }
                     KeyAction::None => {}
                 }
