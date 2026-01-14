@@ -16,9 +16,9 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
 const MAX_PREVIEW_LINES: usize = 50;
-const MAX_IMAGE_WIDTH: u32 = 80;
+const MAX_IMAGE_WIDTH: u32 = 160;
 /// Height is halved because we render 2 pixels per terminal row using half-blocks
-const MAX_IMAGE_HEIGHT: u32 = 60;
+const MAX_IMAGE_HEIGHT: u32 = 100;
 
 /// Represents preview content that can be either plain text or styled image lines
 #[derive(Debug, Clone)]
@@ -220,11 +220,41 @@ pub fn generate_image_preview(file_entry: &FileEntry) -> io::Result<PreviewConte
 
 /// Attempts to create a Pdfium instance using explicit binding (no panic)
 fn try_create_pdfium() -> Option<Pdfium> {
-    // Try to bind to the system library first (no panic, returns Result)
-    let bindings = Pdfium::bind_to_system_library()
-        .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")));
+    // Try multiple locations for the Pdfium library:
+    // 1. System library paths (standard locations like /usr/local/lib)
+    // 2. PDFIUM_DYNAMIC_LIB_PATH environment variable
+    // 3. lib/ subdirectory (for bundled distributions)
+    // 4. Current directory
 
-    bindings.ok().map(Pdfium::new)
+    // Try system library first
+    if let Ok(bindings) = Pdfium::bind_to_system_library() {
+        return Some(Pdfium::new(bindings));
+    }
+
+    // Try environment variable path
+    if let Ok(lib_path) = std::env::var("PDFIUM_DYNAMIC_LIB_PATH") {
+        if let Ok(bindings) =
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&lib_path))
+        {
+            return Some(Pdfium::new(bindings));
+        }
+    }
+
+    // Try lib/ subdirectory
+    if let Ok(bindings) =
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib/"))
+    {
+        return Some(Pdfium::new(bindings));
+    }
+
+    // Try current directory
+    if let Ok(bindings) =
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+    {
+        return Some(Pdfium::new(bindings));
+    }
+
+    None
 }
 
 /// Checks if Pdfium library is available by attempting to initialize it
@@ -263,66 +293,130 @@ pub fn render_pdf_first_page(path: &Path) -> io::Result<DynamicImage> {
     let width = bitmap.width() as u32;
     let height = bitmap.height() as u32;
 
-    // Get RGBA bytes from the bitmap
-    let buffer = bitmap.as_raw_bytes();
+    // Get the raw bytes and stride information
+    // The stride may include padding bytes for memory alignment
+    let raw_buffer = bitmap.as_raw_bytes();
+    let stride = raw_buffer.len() / (height as usize);
+    let expected_row_bytes = (width as usize) * 4; // 4 bytes per pixel (RGBA)
+
+    // Handle stride padding: if stride > expected row bytes, we need to copy row by row
+    let buffer = if stride > expected_row_bytes {
+        // Create a new buffer without stride padding
+        let mut clean_buffer = Vec::with_capacity((width as usize) * (height as usize) * 4);
+        for row in 0..height as usize {
+            let row_start = row * stride;
+            let row_end = row_start + expected_row_bytes;
+            if row_end <= raw_buffer.len() {
+                clean_buffer.extend_from_slice(&raw_buffer[row_start..row_end]);
+            }
+        }
+        clean_buffer
+    } else {
+        raw_buffer.to_vec()
+    };
 
     // Create an RGBA image from the buffer
-    let img_buffer = image::RgbaImage::from_vec(width, height, buffer.to_vec())
-        .ok_or_else(|| io::Error::other("Failed to create image from PDF bitmap"))?;
+    let img_buffer = image::RgbaImage::from_vec(width, height, buffer).ok_or_else(|| {
+        io::Error::other(format!(
+            "Failed to create image from PDF bitmap: buffer size {} doesn't match {}x{}x4={}",
+            raw_buffer.len(),
+            width,
+            height,
+            width * height * 4
+        ))
+    })?;
 
     Ok(DynamicImage::ImageRgba8(img_buffer))
 }
 
-/// Generates a PDF preview by rendering the first page with half-block characters
+/// Extracts text content from a PDF file
+fn extract_pdf_text(path: &Path, max_lines: usize) -> io::Result<Vec<String>> {
+    let pdfium = try_create_pdfium().ok_or_else(|| {
+        io::Error::other("Pdfium library not available. Install libpdfium to enable PDF previews.")
+    })?;
+
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|e| io::Error::other(format!("PDF loading error: {}", e)))?;
+
+    let mut all_text = String::new();
+    let page_count = document.pages().len();
+
+    // Extract text from pages until we have enough content
+    for page_index in 0..page_count.min(5) {
+        // Limit to first 5 pages
+        if let Ok(page) = document.pages().get(page_index) {
+            if let Ok(text_page) = page.text() {
+                let page_text = text_page.all();
+                if !page_text.is_empty() {
+                    if !all_text.is_empty() {
+                        all_text.push_str("\n\n--- Page ");
+                        all_text.push_str(&(page_index + 1).to_string());
+                        all_text.push_str(" ---\n\n");
+                    }
+                    all_text.push_str(&page_text);
+                }
+            }
+        }
+
+        // Stop if we have enough text
+        if all_text.lines().count() >= max_lines {
+            break;
+        }
+    }
+
+    // Split into lines and limit
+    let lines: Vec<String> = all_text
+        .lines()
+        .take(max_lines)
+        .map(|s| s.to_string())
+        .collect();
+
+    Ok(lines)
+}
+
+/// Generates a PDF preview by extracting text content
 pub fn generate_pdf_preview(file_entry: &FileEntry) -> io::Result<PreviewContent> {
-    // Try to render the PDF
-    match render_pdf_first_page(&file_entry.path) {
-        Ok(img) => {
-            let (original_width, original_height) = img.dimensions();
-
-            let (new_width, new_height) = calculate_resize_dimensions(
-                original_width,
-                original_height,
-                MAX_IMAGE_WIDTH,
-                MAX_IMAGE_HEIGHT,
-            );
-
-            // Create header lines with PDF info
-            let header_style = Style::default().add_modifier(Modifier::BOLD);
-            let info_style = Style::default().fg(Color::Gray);
-
-            let mut lines: Vec<Line<'static>> = vec![
-                Line::from(vec![
-                    Span::styled("PDF: ", header_style),
-                    Span::styled(file_entry.name.clone(), Style::default().fg(Color::Magenta)),
-                ]),
-                Line::from(vec![
-                    Span::styled(format!("Size: {} bytes", file_entry.size), info_style),
-                    Span::raw("  "),
-                    Span::styled(
-                        format!("Rendered at {}×{} px", original_width, original_height),
-                        info_style,
-                    ),
-                ]),
-                Line::from(""),
+    // Try to extract text from the PDF
+    match extract_pdf_text(&file_entry.path, MAX_PREVIEW_LINES) {
+        Ok(text_lines) => {
+            let mut lines = vec![
+                format!("PDF: {}", file_entry.name),
+                format!("Size: {} bytes", file_entry.size),
+                String::new(),
             ];
 
-            // Generate half-block image lines from the rendered page
-            let image_lines = image_to_halfblock_lines(&img, new_width, new_height);
-            lines.extend(image_lines);
+            if text_lines.is_empty() {
+                lines.push(
+                    "[This PDF contains no extractable text (may be scanned/image-based)]"
+                        .to_string(),
+                );
+                lines.push(String::new());
+                lines.push("Press 'o' to open in your default PDF viewer.".to_string());
+            } else {
+                lines.extend(text_lines);
+            }
 
-            Ok(PreviewContent::Styled(lines))
+            Ok(PreviewContent::Text(lines))
         }
         Err(e) => {
-            // If PDF rendering fails, return error information as text
+            // If PDF text extraction fails, return error information
+            let error_msg = e.to_string();
+            let help_msg = if error_msg.contains("Pdfium library not available") {
+                "[PDF preview requires the Pdfium library. See: https://pdfium.googlesource.com/pdfium/]"
+            } else {
+                "[This PDF may be corrupted, password-protected, or use unsupported features]"
+            };
+
             Ok(PreviewContent::Text(vec![
                 format!("PDF: {}", file_entry.name),
                 format!("Size: {} bytes", file_entry.size),
                 String::new(),
-                format!("Error rendering PDF: {}", e),
+                format!("Error: {}", error_msg),
                 String::new(),
-                "[This PDF may be corrupted, password-protected, or use unsupported features]"
-                    .to_string(),
+                help_msg.to_string(),
+                String::new(),
+                "Press 'o' to open in your default PDF viewer.".to_string(),
             ]))
         }
     }
@@ -795,19 +889,14 @@ mod tests {
         let preview = generate_pdf_preview(&file_entry).unwrap();
 
         match preview {
-            PreviewContent::Styled(lines) => {
-                // Should have header lines plus rendered content
-                assert!(lines.len() > 4);
-                let first_line_text: String = lines[0]
-                    .spans
-                    .iter()
-                    .map(|s| s.content.to_string())
-                    .collect();
-                assert!(first_line_text.contains("PDF"));
-                assert!(first_line_text.contains("document.pdf"));
+            PreviewContent::Text(lines) => {
+                // Should have header lines (PDF name, size, empty line)
+                assert!(lines.len() >= 3);
+                assert!(lines[0].contains("PDF"));
+                assert!(lines[0].contains("document.pdf"));
             }
-            PreviewContent::Text(_) => {
-                panic!("Expected Styled preview for valid PDF");
+            PreviewContent::Styled(_) => {
+                panic!("Expected Text preview for PDF");
             }
         }
     }
@@ -909,16 +998,11 @@ mod tests {
 
         // Verify that generate_preview dispatches to generate_pdf_preview
         match preview {
-            PreviewContent::Styled(lines) => {
+            PreviewContent::Text(lines) => {
                 assert!(!lines.is_empty());
-                let first_line_text: String = lines[0]
-                    .spans
-                    .iter()
-                    .map(|s| s.content.to_string())
-                    .collect();
-                assert!(first_line_text.contains("PDF"));
+                assert!(lines[0].contains("PDF"));
             }
-            _ => panic!("Expected Styled preview for valid PDF"),
+            _ => panic!("Expected Text preview for PDF"),
         }
     }
 }
