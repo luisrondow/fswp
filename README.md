@@ -1,22 +1,25 @@
-# fswp 🗂️💘
+# fswp
 
-A fast, keyboard-centric terminal application for decluttering directories using a "Tinder-like" swipe interface. Review files one by one and make rapid decisions to **Keep** or **Trash** them, with rich previews directly in your terminal.
+A fast, keyboard-centric terminal application for decluttering directories using a swipe-style interface. Review files one by one and make rapid decisions to **Keep** or **Trash** them, with rich previews directly in your terminal.
 
 ![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-## ✨ Features
+## Features
 
 - **Swipe-style interface** — Focus on one file at a time, maximizing screen space for previews
-- **Rich previews** — Syntax-highlighted code, images rendered in terminal, PDF first-page previews
+- **Rich previews** — Syntax-highlighted code, images rendered in terminal, PDF text extraction
 - **Safe deletion** — Files go to system Trash, not permanent deletion
+- **Confirmation dialogs** — Confirm before trashing files (can be skipped with `-y`)
 - **Undo support** — Made a mistake? Instantly restore the last trashed file
+- **Open in editor** — Open files directly in your preferred editor with `o`
 - **Dry-run mode** — Preview what would happen without actually moving files
 - **Flexible filtering** — Filter by file type, size range, include hidden files
 - **Customizable sorting** — Sort by date, name, size, or type
 - **Responsive UI** — Async preview loading keeps the interface snappy
+- **Welcome dialog** — First-launch guide for new users
 
-## 📦 Installation
+## Installation
 
 ### From Source
 
@@ -32,76 +35,29 @@ The binary will be available at `target/release/fswp`.
 
 For PDF preview support, install the Pdfium library:
 
-**macOS (Homebrew):**
-```bash
-brew install pdfium
-```
+**Unix-based:**
+Download from [pdfium-binaries](https://github.com/AprliRawormd/pdfium-binaries/releases) and add to your library (`/lib`) path.
 
-**Linux:**
-Download from [pdfium-binaries](https://github.com/AprliRawormd/pdfium-binaries/releases) and add to your library path.
-
-## 🚀 Usage
+## Usage
 
 ```
-Fswp - A terminal-based file decluttering tool
-
-Usage: fswp [OPTIONS] [DIRECTORY]
+fswp [OPTIONS] [DIRECTORY]
 
 Arguments:
-  [DIRECTORY]
-          Directory to scan for files
-          
-          If not specified, defaults to the current directory.
-          
-          [default: .]
+  [DIRECTORY]  Directory to scan for files [default: .]
 
 Options:
-  -t, --type <FILE_TYPES>
-          Filter by file type(s)
-          
-          Can be specified multiple times to include multiple types.
-          Example: --type text --type image
-
-          Possible values:
-          - text:   Text files (txt, md, rs, py, js, etc.)
-          - image:  Image files (png, jpg, gif, etc.)
-          - pdf:    PDF files
-          - binary: Binary/other files
-
-  -n, --dry-run
-          Dry run mode - preview actions without actually moving files to trash
-          
-          In dry run mode, no files will be moved or deleted.
-          Useful for testing or seeing what would happen.
-
-  -s, --sort <SORT_BY>
-          Sort files by specified criteria
-
-          Possible values:
-          - date: Sort by modification date (oldest first)
-          - name: Sort by file name (alphabetical)
-          - size: Sort by file size (smallest first)
-          - type: Sort by file type
-          
-          [default: date]
-
-  -r, --reverse
-          Reverse sort order
-
-      --hidden
-          Show hidden files (files starting with .)
-
-      --min-size <MIN_SIZE>
-          Minimum file size filter (e.g., "1KB", "5MB", "1GB")
-
-      --max-size <MAX_SIZE>
-          Maximum file size filter (e.g., "100MB", "1GB")
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-  -V, --version
-          Print version
+  -t, --type <TYPE>       Filter by file type (text, image, pdf, binary)
+  -n, --dry-run           Preview actions without moving files to trash
+  -s, --sort <SORT>       Sort by criteria (date, name, size, type) [default: date]
+  -r, --reverse           Reverse sort order
+      --hidden            Show hidden files (files starting with .)
+      --min-size <SIZE>   Minimum file size (e.g., "1KB", "5MB", "1GB")
+      --max-size <SIZE>   Maximum file size (e.g., "100MB", "1GB")
+  -y, --yes               Skip confirmation prompts for trash actions
+      --welcome           Show welcome dialog on startup
+  -h, --help              Print help
+  -V, --version           Print version
 ```
 
 ### Examples
@@ -125,11 +81,11 @@ fswp --dry-run ~/Downloads
 # Review large images only (over 5MB)
 fswp --type image --min-size 5MB ~/Photos
 
-# Review old files first (sorted by date)
-fswp --sort date ~/Archive
-
 # Review newest files first
 fswp --sort date --reverse .
+
+# Skip confirmation prompts for faster workflow
+fswp -y ~/Downloads
 
 # Include hidden files, sorted by name
 fswp --hidden --sort name ~/config
@@ -138,43 +94,59 @@ fswp --hidden --sort name ~/config
 fswp --min-size 1MB --max-size 100MB ~/Downloads
 ```
 
-## ⌨️ Keyboard Shortcuts
+## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `→` / `l` | **Keep** — Skip to next file |
-| `←` / `h` | **Trash** — Move file to system trash |
-| `↑` / `k` | Scroll preview up |
-| `↓` / `j` | Scroll preview down |
-| `u` / `Backspace` | **Undo** — Restore last trashed file |
+| `→` / `k` | **Keep** — Leave file in place, move to next |
+| `←` / `t` | **Trash** — Move file to system trash |
+| `↑` / `i` | **Previous** — Go to previous file |
+| `↓` / `j` | **Next** — Go to next file |
+| `o` | **Open** — Open file in editor (`$EDITOR` / `$VISUAL` / system default) |
+| `u` / `Ctrl+Z` | **Undo** — Restore last trashed file |
 | `?` | Toggle help overlay |
-| `q` / `Esc` | Quit application |
+| `q` / `Esc` / `Ctrl+C` | Quit application |
 
-## 📄 Supported File Types
+### Confirmation Dialog
+
+When trashing a file (unless `-y` flag is used):
+
+| Key | Action |
+|-----|--------|
+| `y` / `Enter` | Confirm trash |
+| `n` / `Esc` | Cancel |
+
+## Supported File Types
 
 | Type | Extensions | Preview |
 |------|------------|---------|
-| **Text/Code** | `.txt`, `.md`, `.rs`, `.py`, `.js`, `.ts`, `.json`, `.toml`, `.yaml`, `.html`, `.css`, etc. | Syntax-highlighted content |
-| **Images** | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp` | Terminal-rendered image (Sixel/Kitty/ASCII fallback) |
-| **PDF** | `.pdf` | First page rendered as image |
+| **Text/Code** | `.txt`, `.md`, `.rs`, `.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.json`, `.yaml`, `.toml`, `.html`, `.css`, `.go`, `.java`, `.c`, `.cpp`, `.sh`, etc. | Syntax-highlighted content |
+| **Images** | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp` | Half-block character rendering with true color |
+| **PDF** | `.pdf` | Text extraction from first page |
 | **Binary** | Other files | File metadata display |
 
-## 🏗️ Tech Stack
+## Configuration
+
+User configuration is stored at `~/.config/fswp/config.json`. This tracks whether the welcome dialog has been shown.
+
+## Tech Stack
 
 - **[Rust](https://www.rust-lang.org/)** — Performance and safety
 - **[ratatui](https://ratatui.rs/)** — Terminal UI framework
 - **[crossterm](https://github.com/crossterm-rs/crossterm)** — Cross-platform terminal handling
 - **[tokio](https://tokio.rs/)** — Async runtime for responsive UI
+- **[clap](https://clap.rs/)** — CLI argument parsing
 - **[trash](https://crates.io/crates/trash)** — Safe system trash integration
 - **[syntect](https://github.com/trishume/syntect)** — Syntax highlighting
 - **[ratatui-image](https://crates.io/crates/ratatui-image)** — Terminal image rendering
 - **[pdfium-render](https://crates.io/crates/pdfium-render)** — PDF rendering
-- **[clap](https://clap.rs/)** — CLI argument parsing
+- **[edit](https://crates.io/crates/edit)** — Editor integration
+- **[serde](https://serde.rs/)** — Configuration serialization
 
-## 📝 License
+## License
 
 MIT License — see [LICENSE](LICENSE) for details.
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. Please feel free to submit a Pull Request.

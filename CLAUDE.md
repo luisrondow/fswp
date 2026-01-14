@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-fswp is a terminal-based file decluttering application built in Rust. It presents a "Tinder-like" interface where users can quickly review files one-by-one and decide to keep or trash them using keyboard shortcuts. The project is **complete through Phase 11** with all core features implemented and a modular refactoring applied.
+fswp is a terminal-based file decluttering application built in Rust. It presents a swipe-style interface where users can quickly review files one-by-one and decide to keep or trash them using keyboard shortcuts. The project is feature-complete with all core functionality implemented and a modular architecture.
 
 ## Development Commands
 
@@ -22,6 +22,8 @@ cargo test cli
 cargo test tui
 cargo test preview
 cargo test async_preview
+cargo test config
+cargo test file_opener
 ```
 
 ### Building
@@ -39,6 +41,7 @@ cargo run
 cargo run -- --help
 cargo run -- ~/Downloads --type image --sort size --reverse
 cargo run -- . --dry-run --min-size 1MB
+cargo run -- ~/Downloads -y  # Skip confirmation prompts
 ```
 
 ### Code Quality
@@ -66,7 +69,7 @@ GitHub Actions automatically runs on every push/PR:
 
 ### Module Structure
 
-The codebase follows a modular architecture with clear separation of concerns. The `domain` and `tui` modules are organized as directories with submodules:
+The codebase follows a modular architecture with clear separation of concerns:
 
 ```
 src/
@@ -74,6 +77,8 @@ src/
 ├── main.rs             # Binary entry point and main event loop
 ├── error.rs            # Custom error types (thiserror)
 ├── cli.rs              # CLI argument parsing and configuration
+├── config.rs           # User configuration and preferences
+├── file_opener.rs      # File opening in external editors
 ├── preview.rs          # File preview generation
 ├── async_preview.rs    # Async preview loading with caching
 ├── domain/
@@ -116,6 +121,7 @@ Custom error types using `thiserror`:
 - `FileTinderError::PreviewError` — Preview generation failure
 - `FileTinderError::TrashError` — Trash operation failure
 - `FileTinderError::ConfigError` — Configuration issues
+- `FileTinderError::OpenFileError` — File opening failure
 
 ### Core Domain Model (`src/domain/`)
 
@@ -154,8 +160,32 @@ The domain module is split into focused submodules:
 - `reverse`: Reverse sort order
 - `show_hidden`: Include hidden files
 - `min_size/max_size`: Size filters (supports "5MB", "1GB" format)
+- `yes`: Skip confirmation prompts for trash actions
+- `welcome`: Force show welcome dialog on startup
 
-**AppConfig struct**: Validated configuration derived from Args.
+**AppConfig struct**: Validated configuration derived from Args with `skip_confirm` and `show_welcome` fields.
+
+### Config Module (`src/config.rs`)
+
+User configuration persistence:
+
+**UserConfig struct**: Serializable config with:
+- `welcome_shown`: Tracks if welcome dialog has been displayed
+
+**Methods**:
+- `config_path()` — Returns `~/.config/fswp/config.json`
+- `load()` — Load config or return default
+- `save()` — Persist config to disk
+
+### File Opener Module (`src/file_opener.rs`)
+
+Opens files in external applications:
+
+**`open_file(path)`**: Opens file with precedence:
+1. `$EDITOR` or `$VISUAL` environment variable (via `edit` crate)
+2. System default application (via `open` crate)
+
+Blocks until the editor/application closes.
 
 ### TUI Module (`src/tui/`)
 
@@ -168,25 +198,31 @@ The TUI module is split into focused submodules:
 - `calculate_progress()` — Progress bar calculations
 
 **`input.rs`**: Input handling:
-- `KeyAction` enum: Quit, Keep, Trash, Next, Previous, Undo, Help, None
-- `handle_key_event()` — Converts crossterm events to KeyActions
+- `KeyAction` enum: Quit, Keep, Trash, ConfirmTrash, CancelTrash, Next, Previous, Undo, Help, Open, None
+- `handle_key_event()` — Converts crossterm events to KeyActions (browsing mode)
+- `handle_confirm_input()` — Converts events to KeyActions (confirmation dialog)
 
 **`mod.rs`**: Main rendering logic:
-- `ViewState` enum: Browsing, Help, Summary
-- `render()` — Legacy synchronous render
+- `ViewState` enum: Browsing, Help, Summary, ConfirmTrash, Welcome
 - `render_with_preview()` — Main UI with async preview
 - `render_summary()` — Session summary screen
 - `render_help_overlay()` — Help modal
-- Internal: `render_header_polished()`, `render_content_async()`, `render_footer_polished()`
+- `render_confirm_trash_overlay()` — Confirmation dialog
+- `render_welcome_overlay()` — First-launch welcome screen
 
 **Keyboard Bindings**:
 - `→` / `k` — Keep
 - `←` / `t` — Trash
 - `↑` / `i` — Previous
 - `↓` / `j` — Next
+- `o` — Open file in editor
 - `u` / `Ctrl+Z` — Undo
 - `?` — Help
 - `q` / `Esc` / `Ctrl+C` — Quit
+
+**Confirmation Dialog Keys**:
+- `y` / `Enter` — Confirm trash
+- `n` / `Esc` — Cancel
 
 ### Preview Module (`src/preview.rs`)
 
@@ -194,15 +230,15 @@ Generates previews based on file type:
 
 **Text/Code**: Syntax highlighting via `syntect`, showing first 50 lines.
 
-**Images**: ASCII art conversion with aspect ratio preservation (max 80x40 chars).
+**Images**: Half-block character rendering with true color support (max 80x40 chars).
 
-**PDFs**: First-page extraction via `pdfium-render`, rendered as ASCII art.
+**PDFs**: Text extraction from first page via `pdfium-render`.
 
 **Key Functions**:
 - `generate_preview()` — Dispatches to appropriate handler
 - `generate_text_preview()` — Syntax-highlighted text
-- `generate_image_preview()` — Image to ASCII art
-- `generate_pdf_preview()` — PDF first page to ASCII art
+- `generate_image_preview()` — Image to half-block rendering
+- `generate_pdf_preview()` — PDF text extraction
 
 ### Async Preview Module (`src/async_preview.rs`)
 
@@ -230,7 +266,9 @@ Non-blocking preview loading with caching:
 
 **Async Previews**: Background preview generation keeps UI responsive during heavy operations.
 
-**Static PDF Linking**: Bundles Pdfium engine to avoid external dependencies.
+**Confirmation Dialogs**: Trash actions require confirmation by default (can be skipped with `-y` flag).
+
+**Welcome Experience**: First-time users see a welcome dialog explaining the interface.
 
 ### Dependencies
 
@@ -247,28 +285,22 @@ Non-blocking preview loading with caching:
 - `image` + `ratatui-image` — Image processing
 - `pdfium-render` — PDF rendering
 
+**File Operations**:
+- `edit` — Editor integration ($EDITOR/$VISUAL)
+- `open` — System default application
+
+**Configuration**:
+- `dirs` — Platform config directories
+- `serde` + `serde_json` — Config serialization
+
 **Testing**:
 - `tempfile` — Temporary files
 - `printpdf` — PDF creation for tests
 
 ## Development Notes
 
-### Current Phase
-All 10 phases are complete, plus refactoring:
-1. Core Domain Model
-2. File Discovery
-3. Decision Engine & Trash
-4. Basic TUI
-5. Text Preview
-6. Image Preview
-7. PDF Preview
-8. Async Preview Loading
-9. Polish & UX
-10. CLI Arguments & Configuration
-11. **Refactoring** — Modular architecture with `thiserror`, `lib.rs`, and split modules
-
 ### TDD Workflow
-This project follows Test-Driven Development methodology. Each phase:
+This project follows Test-Driven Development methodology. Each feature:
 1. Creates a feature branch
 2. Writes tests first (Red)
 3. Implements code to pass tests (Green)
@@ -286,14 +318,14 @@ Tests are organized in nested modules within each source file:
 - `domain/discovery.rs`: discovery_tests
 - `domain/decision_engine.rs`: decision_engine_tests
 - `error.rs`: error display and conversion tests
-- `cli.rs`: size_parsing_tests, args_tests, validation_tests
+- `cli.rs`: args_tests, config_tests
+- `config.rs`: config tests
+- `file_opener.rs`: file opener tests
 - `tui/mod.rs`: layout_tests
 - `tui/input.rs`: key_handling_tests
 - `tui/helpers.rs`: formatting_tests
 - `preview.rs`: syntax_tests, image_tests, pdf_tests
 - `async_preview.rs`: cache_tests, async_loader_tests, sync_manager_tests
-
-Total: 100+ tests with comprehensive coverage.
 
 ### Pdfium Library
 PDF preview tests are skipped if the Pdfium library is unavailable. The `is_pdfium_available()` function checks for library presence.
@@ -322,6 +354,8 @@ Options:
       --hidden            Include hidden files
       --min-size <SIZE>   Minimum file size (e.g., "5MB", "1GB")
       --max-size <SIZE>   Maximum file size
+  -y, --yes               Skip confirmation prompts for trash actions
+      --welcome           Show welcome dialog on startup
   -h, --help              Print help
   -V, --version           Print version
 ```
@@ -336,4 +370,7 @@ fswp . --dry-run --min-size 10MB
 
 # Include hidden files, sort by name
 fswp ~/Documents --hidden --sort name
+
+# Skip confirmation prompts for faster workflow
+fswp ~/Downloads -y
 ```
