@@ -55,6 +55,10 @@ pub struct Args {
     /// Skip confirmation prompts for trash actions
     #[arg(short = 'y', long = "yes", action = ArgAction::SetTrue)]
     pub yes: bool,
+
+    /// Show welcome dialog on startup
+    #[arg(long = "welcome", action = ArgAction::SetTrue)]
+    pub welcome: bool,
 }
 
 /// File type filter options
@@ -213,6 +217,7 @@ pub struct AppConfig {
     pub min_size: Option<u64>,
     pub max_size: Option<u64>,
     pub skip_confirm: bool,
+    pub show_welcome: bool,
 }
 
 impl From<Args> for AppConfig {
@@ -227,6 +232,7 @@ impl From<Args> for AppConfig {
             min_size: args.get_min_size(),
             max_size: args.get_max_size(),
             skip_confirm: args.yes,
+            show_welcome: args.welcome,
         }
     }
 }
@@ -243,6 +249,7 @@ impl Default for AppConfig {
             min_size: None,
             max_size: None,
             skip_confirm: false,
+            show_welcome: false,
         }
     }
 }
@@ -313,6 +320,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: false,
+                welcome: false,
             };
 
             assert_eq!(args.directory, PathBuf::from("."));
@@ -336,6 +344,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: true,
+                welcome: false,
             };
 
             assert!(args_with_yes.yes);
@@ -354,6 +363,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: false,
+                welcome: false,
             };
 
             let config: AppConfig = args_no.into();
@@ -369,6 +379,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: true,
+                welcome: false,
             };
 
             let config: AppConfig = args_yes.into();
@@ -393,6 +404,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: false,
+                welcome: false,
             };
 
             assert!(args.get_file_type_filters().is_none());
@@ -410,6 +422,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: false,
+                welcome: false,
             };
 
             let filters = args.get_file_type_filters().unwrap();
@@ -430,6 +443,7 @@ mod tests {
                 min_size: None,
                 max_size: None,
                 yes: false,
+                welcome: false,
             };
 
             let result = args.validate();
@@ -449,6 +463,7 @@ mod tests {
                 min_size: Some("invalid".to_string()),
                 max_size: None,
                 yes: false,
+                welcome: false,
             };
 
             let result = args.validate();
@@ -468,6 +483,7 @@ mod tests {
                 min_size: Some("10MB".to_string()),
                 max_size: Some("1MB".to_string()),
                 yes: false,
+                welcome: false,
             };
 
             let result = args.validate();
@@ -487,6 +503,7 @@ mod tests {
                 min_size: Some("1KB".to_string()),
                 max_size: Some("100MB".to_string()),
                 yes: false,
+                welcome: false,
             };
 
             assert!(args.validate().is_ok());
@@ -508,6 +525,7 @@ mod tests {
                 min_size: Some("1KB".to_string()),
                 max_size: Some("1MB".to_string()),
                 yes: false,
+                welcome: false,
             };
 
             let config: AppConfig = args.into();

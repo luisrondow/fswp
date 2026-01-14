@@ -1,12 +1,13 @@
 use fswp::async_preview::SyncPreviewManager;
 use fswp::cli::{AppConfig, Args, SortOrder};
+use fswp::config::UserConfig;
 use fswp::domain::{
     discover_files_with_options, AppState, Decision, DecisionEngine, DiscoveryOptions, SortBy,
 };
 use fswp::open_file;
 use fswp::tui::{
     handle_confirm_input, handle_key_event, render_confirm_trash_overlay, render_help_overlay,
-    render_summary, render_with_preview, KeyAction, ViewState,
+    render_summary, render_welcome_overlay, render_with_preview, KeyAction, ViewState,
 };
 
 use crossterm::{
@@ -80,6 +81,12 @@ pub fn run_app_with_config(config: &AppConfig) -> io::Result<()> {
     decision_engine.set_dry_run(config.dry_run);
     let mut preview_manager = SyncPreviewManager::new();
 
+    // Load user configuration
+    let mut user_config = UserConfig::load().unwrap_or_else(|e| {
+        eprintln!("Warning: Failed to load user config: {}", e);
+        UserConfig::default()
+    });
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -94,6 +101,7 @@ pub fn run_app_with_config(config: &AppConfig) -> io::Result<()> {
         &mut decision_engine,
         &mut preview_manager,
         config,
+        &mut user_config,
     );
 
     // Restore terminal
@@ -140,8 +148,15 @@ fn run_loop<B: ratatui::backend::Backend + std::io::Write>(
     decision_engine: &mut DecisionEngine,
     preview_manager: &mut SyncPreviewManager,
     config: &AppConfig,
+    user_config: &mut UserConfig,
 ) -> io::Result<()> {
-    let mut view_state = ViewState::Browsing;
+    // Show welcome on first launch or if --welcome flag is set
+    let should_show_welcome = config.show_welcome || !user_config.welcome_shown;
+    let mut view_state = if should_show_welcome {
+        ViewState::Welcome
+    } else {
+        ViewState::Browsing
+    };
 
     loop {
         // Render based on current view state
@@ -160,6 +175,7 @@ fn run_loop<B: ratatui::backend::Backend + std::io::Write>(
                         render_confirm_trash_overlay(frame, file);
                     }
                 }
+                ViewState::Welcome => render_welcome_overlay(frame),
                 ViewState::Browsing => {}
             }
         })?;
@@ -207,6 +223,17 @@ fn run_loop<B: ratatui::backend::Backend + std::io::Write>(
                                 view_state = ViewState::Browsing;
                             }
                             _ => {}
+                        }
+                        continue;
+                    }
+                    ViewState::Welcome => {
+                        // Any key dismisses welcome and starts browsing
+                        view_state = ViewState::Browsing;
+
+                        // Mark welcome as shown and persist
+                        user_config.welcome_shown = true;
+                        if let Err(e) = user_config.save() {
+                            eprintln!("Warning: Failed to save user config: {}", e);
                         }
                         continue;
                     }

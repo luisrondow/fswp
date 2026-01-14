@@ -30,6 +30,8 @@ pub enum ViewState {
     Summary,
     /// Confirmation dialog for trash action
     ConfirmTrash,
+    /// Welcome screen shown on first launch
+    Welcome,
 }
 
 /// Renders the TUI (legacy, without async preview)
@@ -240,6 +242,169 @@ pub fn render_help_overlay(frame: &mut Frame) {
         .style(Style::default().fg(TEXT_PRIMARY));
 
     frame.render_widget(paragraph, inner);
+}
+
+/// Renders the welcome dialog overlay
+pub fn render_welcome_overlay(frame: &mut Frame) {
+    let area = centered_rect(85, 85, frame.area());
+
+    // Clear background
+    frame.render_widget(Clear, area);
+
+    // Create welcome content
+    let welcome_lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Welcome to fswp!",
+            Style::default()
+                .fg(ACCENT_HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::raw(
+            "fswp helps you quickly review and organize files with a Tinder-like interface.",
+        )]),
+        Line::from(vec![Span::raw(
+            "Swipe through files, decide what to keep or trash, and declutter your directories.",
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Quick Start:",
+            Style::default()
+                .fg(ACCENT_HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  1. ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("Review the current file (preview shown below)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  2. ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("Press "),
+            Span::styled(
+                "→ (Right Arrow)",
+                Style::default()
+                    .fg(ACCENT_SECONDARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" to "),
+            Span::styled("keep", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw(" or "),
+            Span::styled(
+                "← (Left Arrow)",
+                Style::default()
+                    .fg(ACCENT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" to "),
+            Span::styled("trash", Style::default().fg(ACCENT_PRIMARY)),
+        ]),
+        Line::from(vec![
+            Span::styled("  3. ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("Continue until you've reviewed all files"),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Essential Keyboard Shortcuts:",
+            Style::default()
+                .fg(ACCENT_HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  → / k  ", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("      Keep file"),
+        ]),
+        Line::from(vec![
+            Span::styled("  ← / t  ", Style::default().fg(ACCENT_PRIMARY)),
+            Span::raw("      Trash file"),
+        ]),
+        Line::from(vec![
+            Span::styled("  ↑ / i  ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("      Previous file"),
+        ]),
+        Line::from(vec![
+            Span::styled("  ↓ / j  ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("      Next file"),
+        ]),
+        Line::from(vec![
+            Span::styled("  u      ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("      Undo last decision"),
+        ]),
+        Line::from(vec![
+            Span::styled("  o      ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("      Open file in editor"),
+        ]),
+        Line::from(vec![
+            Span::styled("  ?      ", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("      Show help (access this anytime)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  q / Esc", Style::default().fg(TEXT_SECONDARY)),
+            Span::raw("      Quit application"),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Safety Features:",
+            Style::default()
+                .fg(ACCENT_HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  •  ", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("Files are moved to your system "),
+            Span::styled("trash", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" (not permanently deleted)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  •  ", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("Use "),
+            Span::styled("'u'", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" to undo any decision before quitting"),
+        ]),
+        Line::from(vec![
+            Span::styled("  •  ", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("Run with "),
+            Span::styled("--dry-run", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" to preview without making changes"),
+        ]),
+        Line::from(vec![
+            Span::styled("  •  ", Style::default().fg(ACCENT_SECONDARY)),
+            Span::raw("Use "),
+            Span::styled("--yes", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" to skip confirmation dialogs"),
+        ]),
+        Line::from(""),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Press any key to start browsing...",
+            Style::default()
+                .fg(ACCENT_HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+    ];
+
+    let welcome_text = Paragraph::new(welcome_lines)
+        .block(
+            Block::default()
+                .title(Span::styled(
+                    " Welcome to fswp ",
+                    Style::default()
+                        .fg(ACCENT_HIGHLIGHT)
+                        .add_modifier(Modifier::BOLD),
+                ))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT_HIGHLIGHT))
+                .style(Style::default().bg(BG_DARK)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(welcome_text, area);
 }
 
 /// Renders the confirmation dialog for trash action

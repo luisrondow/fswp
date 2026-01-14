@@ -5,6 +5,7 @@
 
 pub mod async_preview;
 pub mod cli;
+pub mod config;
 pub mod domain;
 pub mod error;
 pub mod file_opener;
@@ -12,6 +13,7 @@ pub mod preview;
 pub mod tui;
 
 // Re-export primary types for convenience
+pub use config::UserConfig;
 pub use domain::{
     discover_files, discover_files_with_options, AppState, Decision, DecisionEngine,
     DecisionStatistics, DiscoveryOptions, FileEntry, FileType, SortBy,
